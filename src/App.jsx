@@ -240,7 +240,8 @@ const TruthTableCalculator = () => {
     // Ekstrak sub-ekspresi
     const subExpressions = extractSubExpressions(postfixTokens, precedence);
     
-    for (let i = 0; i < numRows; i++) {
+    // Mulai dari kombinasi True (semua bit 1) hingga False (semua bit 0)
+    for (let i = numRows - 1; i >= 0; i--) {
       const values = {};
       for (let j = 0; j < usedVars.length; j++) {
         values[usedVars[j]] = Boolean((i >> (usedVars.length - 1 - j)) & 1);
