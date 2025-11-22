@@ -236,7 +236,12 @@ const TruthTableCalculator = () => {
 
     const numRows = Math.pow(2, usedVars.length);
     const rows = [];
-    for (let i = 0; i < numRows; i++) {
+    
+    // Ekstrak sub-ekspresi
+    const subExpressions = extractSubExpressions(postfixTokens, precedence);
+    
+    // Mulai dari kombinasi True (semua bit 1) hingga False (semua bit 0)
+    for (let i = numRows - 1; i >= 0; i--) {
       const values = {};
       for (let j = 0; j < usedVars.length; j++) {
         values[usedVars[j]] = Boolean((i >> (usedVars.length - 1 - j)) & 1);
@@ -244,13 +249,20 @@ const TruthTableCalculator = () => {
       let result;
       try { result = evaluatePostfix(postfixTokens, values); }
       catch (e) { alert('Kesalahan saat mengevaluasi: ' + e.message); setResults(null); return; }
-      rows.push({ values, result });
+      
+      // Evaluasi semua sub-ekspresi
+      const subResults = {};
+      for (const subExpr of subExpressions) {
+        subResults[subExpr] = evaluateSubExpression(subExpr, values);
+      }
+      
+      rows.push({ values, result, subResults });
     }
 
     // Hitung data untuk CNF dan DNF
     const normalFormsData = calculateNormalFormsTableData(usedVars, rows);
 
-    setResults({ usedVars, rows, formula: expression, normalFormsData });
+    setResults({ usedVars, rows, formula: expression, normalFormsData, subExpressions });
   };
 
   const buttonConfigs = [
@@ -295,7 +307,10 @@ const TruthTableCalculator = () => {
               <table className="w-full" style={{ borderCollapse: 'collapse' }}>
                 <thead><tr>
                   {results.usedVars.map(v => <th key={v} className="bg-purple-600 text-white p-4 font-bold text-center">{v}</th>)}
-                  <th className="bg-purple-600 text-white p-4 font-bold text-center">Hasil</th>
+                  {results.subExpressions && results.subExpressions.map((subExpr, idx) => (
+                    <th key={`sub-${idx}`} className="bg-blue-500 text-white p-3 font-semibold text-center text-sm border-l-2 border-blue-300">{subExpr}</th>
+                  ))}
+                  <th className="bg-purple-600 text-white p-4 font-bold text-center border-l-4 border-purple-800">Hasil</th>
                 </tr></thead>
                 <tbody>
                   {results.rows.map((row, index) => (
@@ -303,7 +318,12 @@ const TruthTableCalculator = () => {
                       {results.usedVars.map(v => (
                         <td key={v} className={`p-3 text-center font-bold ${row.values[v] ? 'text-green-600' : 'text-red-600'}`}>{row.values[v] ? 'B' : 'S'}</td>
                       ))}
-                      <td className={`p-3 text-center font-bold bg-yellow-100 ${row.result ? 'text-green-600' : 'text-red-600'}`}>{row.result ? 'B' : 'S'}</td>
+                      {results.subExpressions && results.subExpressions.map((subExpr, idx) => (
+                        <td key={`sub-${idx}-${index}`} className={`p-3 text-center font-bold bg-blue-50 border-l-2 border-blue-200 ${row.subResults[subExpr] ? 'text-green-600' : 'text-red-600'}`}>
+                          {row.subResults[subExpr] ? 'B' : 'S'}
+                        </td>
+                      ))}
+                      <td className={`p-3 text-center font-bold bg-yellow-100 border-l-4 border-yellow-300 ${row.result ? 'text-green-600' : 'text-red-600'}`}>{row.result ? 'B' : 'S'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -381,6 +401,7 @@ const TruthTableCalculator = () => {
             • Ketik ekspresi logika menggunakan huruf kapital (A-Z) sebagai variabel.<br/>
             • Gunakan tombol operator atau ketik simbol: <b>∧</b> (AND), <b>∨</b> (OR), <b>¬</b> (NOT), <b>↑</b> (NAND), <b>↓</b> (NOR), <b>⊕</b> (XOR), <b>→</b> (IMP), <b>↔</b> (BIMP).<br/>
             • Tekan HITUNG untuk melihat tabel kebenaran beserta bentuk normalnya (DNF dan CNF).<br/>
+            • <b>Kolom biru</b> menampilkan hasil evaluasi sub-ekspresi untuk membantu memahami proses perhitungan.<br/>
             • Tabel DNF menunjukkan minterm (kombinasi variabel yang membuat hasil BENAR).<br/>
             • Tabel CNF menunjukkan maxterm (kombinasi variabel yang membuat hasil SALAH).<br/>
             • C = Clear (hapus semua), ⌫ = Backspace.
