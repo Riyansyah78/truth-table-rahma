@@ -20,7 +20,7 @@ const infixToPostfix = (tokens, precedence) => {
   const operators = [];
 
   for (const token of tokens) {
-    if (/[A-Z]/.test(token) || token === 'true' || token === 'false') {
+    if (/^[A-Z]$/.test(token) || token === 'true' || token === 'false') {
       output.push(token);
     } else if (token === '(') {
       operators.push(token);
@@ -56,7 +56,10 @@ const evaluatePostfix = (postfixTokens, variableValues) => {
   const stack = [];
 
   for (const token of postfixTokens) {
-    if (/[A-Z]/.test(token)) {
+    // Skip token kosong atau whitespace
+    if (!token || token.trim() === '') continue;
+    
+    if (/^[A-Z]$/.test(token)) {
       stack.push(variableValues[token]);
     } else if (token === 'true') {
       stack.push(true);
@@ -87,9 +90,69 @@ const evaluatePostfix = (postfixTokens, variableValues) => {
   }
 
   if (stack.length !== 1) {
-    throw new Error('Ekspresi tidak valid: terlalu banyak operand.');
+    throw new Error(`Ekspresi tidak valid: hasil evaluasi menghasilkan ${stack.length} nilai (seharusnya 1). Periksa kembali ekspresi Anda.`);
   }
   return stack.pop();
+};
+
+// Fungsi untuk mengekstrak sub-ekspresi dari postfix
+const extractSubExpressions = (postfixTokens, precedence) => {
+  const subExprs = new Set();
+  const stack = [];
+  
+  for (const token of postfixTokens) {
+    if (!token || token.trim() === '') continue;
+    
+    if (/^[A-Z]$/.test(token)) {
+      stack.push(token);
+    } else if (token === 'true' || token === 'false') {
+      stack.push(token);
+    } else {
+      if (token === '¬' || token === 'NOT') {
+        if (stack.length < 1) continue;
+        const a = stack.pop();
+        const expr = `¬${a}`;
+        subExprs.add(expr);
+        stack.push(expr);
+      } else {
+        if (stack.length < 2) continue;
+        const b = stack.pop();
+        const a = stack.pop();
+        const expr = `(${a} ${token} ${b})`;
+        subExprs.add(expr);
+        stack.push(expr);
+      }
+    }
+  }
+  
+  // Filter dan urutkan berdasarkan kompleksitas
+  return Array.from(subExprs)
+    .filter(expr => !(/^[A-Z]$/.test(expr))) // Hapus variabel tunggal
+    .sort((a, b) => a.length - b.length); // Urutkan dari sederhana ke kompleks
+};
+
+// Fungsi untuk mengevaluasi sub-ekspresi
+const evaluateSubExpression = (subExpr, variableValues) => {
+  try {
+    const precedence = {
+      '¬': 4, 'NOT': 4, '∧': 3, 'AND': 3, '↑': 3, 'NAND': 3,
+      '∨': 2, 'OR': 2, '↓': 2, 'NOR': 2, '⊕': 2, 'XOR': 2,
+      '→': 1, 'IMP': 1, '↔': 1, 'BIMP': 1
+    };
+    
+    const tokenize = (input) => {
+      let processedExpr = input;
+      processedExpr = processedExpr.replace(/([∧∨¬→↔⊕↑↓()])/g, ' $1 ');
+      processedExpr = processedExpr.replace(/\s+/g, ' ').trim();
+      return processedExpr.split(/\s+/).filter(token => token.length > 0);
+    };
+    
+    const tokens = tokenize(subExpr);
+    const postfix = infixToPostfix(tokens, precedence);
+    return evaluatePostfix(postfix, variableValues);
+  } catch (e) {
+    return null;
+  }
 };
 
 const calculateNormalFormsTableData = (usedVars, rows) => {
@@ -143,11 +206,26 @@ const TruthTableCalculator = () => {
     const usedVars = [...new Set(expr.match(/\b[A-Z]\b/g))];
     if (usedVars.length === 0) { alert('Ekspresi harus mengandung setidaknya satu variabel (contoh: A, B, C)!'); return; }
 
+    // Validasi: cek jika ada variabel langsung diikuti kurung buka tanpa operator
+    if (/[A-Z]\s*\(/.test(expr)) {
+      alert('Error: Variabel tidak boleh langsung diikuti kurung buka!\n\nContoh salah: P ∧ Q(¬P ∨ Q)\nContoh benar: P ∧ Q ∧ (¬P ∨ Q)\n\nTambahkan operator (∧, ∨, →, dll) antara variabel dan kurung.');
+      return;
+    }
+    
+    // Validasi: cek jika ada kurung tutup diikuti variabel tanpa operator
+    if (/\)\s*[A-Z]/.test(expr)) {
+      alert('Error: Kurung tutup tidak boleh langsung diikuti variabel!\n\nContoh salah: (A ∨ B)C\nContoh benar: (A ∨ B) ∧ C\n\nTambahkan operator (∧, ∨, →, dll) antara kurung dan variabel.');
+      return;
+    }
+
     const tokenize = (input) => {
       let processedExpr = input;
-      processedExpr = processedExpr.replace(/([∧∨¬↑↓⊕→↔()])/g, ' $1 ');
+      // Tambahkan spasi di sekitar operator dan kurung
+      processedExpr = processedExpr.replace(/([∧∨¬→↔⊕↑↓()])/g, ' $1 ');
+      // Hapus multiple whitespace dan trim
       processedExpr = processedExpr.replace(/\s+/g, ' ').trim();
-      return processedExpr.split(/\s+/);
+      // Split dan filter token kosong
+      return processedExpr.split(/\s+/).filter(token => token.length > 0);
     };
 
     let tokens, postfixTokens;
@@ -158,6 +236,10 @@ const TruthTableCalculator = () => {
 
     const numRows = Math.pow(2, usedVars.length);
     const rows = [];
+    
+    // Ekstrak sub-ekspresi
+    const subExpressions = extractSubExpressions(postfixTokens, precedence);
+    
     for (let i = 0; i < numRows; i++) {
       const values = {};
       for (let j = 0; j < usedVars.length; j++) {
@@ -166,24 +248,31 @@ const TruthTableCalculator = () => {
       let result;
       try { result = evaluatePostfix(postfixTokens, values); }
       catch (e) { alert('Kesalahan saat mengevaluasi: ' + e.message); setResults(null); return; }
-      rows.push({ values, result });
+      
+      // Evaluasi semua sub-ekspresi
+      const subResults = {};
+      for (const subExpr of subExpressions) {
+        subResults[subExpr] = evaluateSubExpression(subExpr, values);
+      }
+      
+      rows.push({ values, result, subResults });
     }
 
     // Hitung data untuk CNF dan DNF
     const normalFormsData = calculateNormalFormsTableData(usedVars, rows);
 
-    setResults({ usedVars, rows, formula: expression, normalFormsData });
+    setResults({ usedVars, rows, formula: expression, normalFormsData, subExpressions });
   };
 
   const buttonConfigs = [
     { text: '∧', className: 'btn-operator', action: () => setExpression(prev => prev + ' ∧ ') },
     { text: '∨', className: 'btn-operator', action: () => setExpression(prev => prev + ' ∨ ') },
     { text: '¬', className: 'btn-operator', action: () => setExpression(prev => prev + ' ¬ ') },
-    { text: '↑', className: 'btn-operator', action: () => setExpression(prev => prev + ' ↑ ') },
-    { text: '↓', className: 'btn-operator', action: () => setExpression(prev => prev + ' ↓ ') },
-    { text: '⊕', className: 'btn-operator', action: () => setExpression(prev => prev + ' ⊕ ') },
     { text: '→', className: 'btn-operator', action: () => setExpression(prev => prev + ' → ') },
     { text: '↔', className: 'btn-operator', action: () => setExpression(prev => prev + ' ↔ ') },
+    { text: '⊕', className: 'btn-operator', action: () => setExpression(prev => prev + ' ⊕ ') },
+    { text: '↑', className: 'btn-operator', action: () => setExpression(prev => prev + ' ↑ ') },
+    { text: '↓', className: 'btn-operator', action: () => setExpression(prev => prev + ' ↓ ') },
     { text: '(', className: 'btn-action', action: () => setExpression(prev => prev + '(') },
     { text: ')', className: 'btn-action', action: () => setExpression(prev => prev + ')') },
     { text: '⌫', className: 'btn-clear', action: () => setExpression(prev => prev.slice(0, -1)) },
@@ -196,7 +285,7 @@ const TruthTableCalculator = () => {
     <div className="min-h-screen bg-gradient-to-br from-[#ffecd2] via-[#fcb69f] to-[#ffecd2] p-5 font-sans">
       <div className="max-w-5xl mx-auto bg-white/95 backdrop-blur-lg rounded-3xl p-10 shadow-2xl">
         {/* ... Header dan Kalkulator Input ... (sama seperti sebelumnya) */}
-        <h1 className="text-center text-4xl font-extrabold mb-8 bg-gradient-to-r from-pink-400 to-pink-200 bg-clip-text text-transparent">Kalkulator Tabel Kebenaran</h1>
+        <h1 className="text-center text-4xl font-extrabold mb-8 bg-gradient-to-r from-pink-400 to-pink-200 bg-clip-text text-transparent">🔢 Kalkulator Tabel Kebenaran</h1>
         <div className="bg-gradient-to-br from-pink-50 to-pink-100 p-6 rounded-2xl mb-8 shadow-lg">
           {/* ... Bagian textarea dan tombol ... (sama) */}
           <textarea ref={textAreaRef} className="w-full min-h-[80px] p-5 text-2xl text-[#6b5b95] font-mono bg-white rounded-xl border-4 border-[#ffd1dc] focus:outline-none focus:border-[#ffb6c1] focus:ring-4 focus:ring-pink-300/50 transition-all duration-300" value={expression} onChange={(e) => setExpression(e.target.value)} placeholder="Ketik ekspresi... (contoh: (A ∧ B) ∨ ¬C)" />
@@ -210,14 +299,17 @@ const TruthTableCalculator = () => {
           <div className="result-section mt-8">
             {/* --- TABEL KEBENARAN UTAMA --- */}
             <div className="bg-gradient-to-r from-green-100 to-yellow-50 p-5 rounded-xl mb-5 border-l-5 border-green-400 shadow-md">
-              <h3 className="text-green-600 font-bold mb-2 text-lg">📝 Ekspresi:</h3>
+              <h3 className="text-green-600 font-bold mb-2 text-lg">🔍 Ekspresi:</h3>
               <div className="text-lg text-green-800 font-mono font-semibold">{results.formula}</div>
             </div>
             <div className="overflow-x-auto rounded-xl shadow-lg mb-8">
               <table className="w-full" style={{ borderCollapse: 'collapse' }}>
                 <thead><tr>
                   {results.usedVars.map(v => <th key={v} className="bg-purple-600 text-white p-4 font-bold text-center">{v}</th>)}
-                  <th className="bg-purple-600 text-white p-4 font-bold text-center">Hasil</th>
+                  {results.subExpressions && results.subExpressions.map((subExpr, idx) => (
+                    <th key={`sub-${idx}`} className="bg-blue-500 text-white p-3 font-semibold text-center text-sm border-l-2 border-blue-300">{subExpr}</th>
+                  ))}
+                  <th className="bg-purple-600 text-white p-4 font-bold text-center border-l-4 border-purple-800">Hasil</th>
                 </tr></thead>
                 <tbody>
                   {results.rows.map((row, index) => (
@@ -225,7 +317,12 @@ const TruthTableCalculator = () => {
                       {results.usedVars.map(v => (
                         <td key={v} className={`p-3 text-center font-bold ${row.values[v] ? 'text-green-600' : 'text-red-600'}`}>{row.values[v] ? 'B' : 'S'}</td>
                       ))}
-                      <td className={`p-3 text-center font-bold bg-yellow-100 ${row.result ? 'text-green-600' : 'text-red-600'}`}>{row.result ? 'B' : 'S'}</td>
+                      {results.subExpressions && results.subExpressions.map((subExpr, idx) => (
+                        <td key={`sub-${idx}-${index}`} className={`p-3 text-center font-bold bg-blue-50 border-l-2 border-blue-200 ${row.subResults[subExpr] ? 'text-green-600' : 'text-red-600'}`}>
+                          {row.subResults[subExpr] ? 'B' : 'S'}
+                        </td>
+                      ))}
+                      <td className={`p-3 text-center font-bold bg-yellow-100 border-l-4 border-yellow-300 ${row.result ? 'text-green-600' : 'text-red-600'}`}>{row.result ? 'B' : 'S'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -303,6 +400,7 @@ const TruthTableCalculator = () => {
             • Ketik ekspresi logika menggunakan huruf kapital (A-Z) sebagai variabel.<br/>
             • Gunakan tombol operator atau ketik simbol: <b>∧</b> (AND), <b>∨</b> (OR), <b>¬</b> (NOT), <b>↑</b> (NAND), <b>↓</b> (NOR), <b>⊕</b> (XOR), <b>→</b> (IMP), <b>↔</b> (BIMP).<br/>
             • Tekan HITUNG untuk melihat tabel kebenaran beserta bentuk normalnya (DNF dan CNF).<br/>
+            • <b>Kolom biru</b> menampilkan hasil evaluasi sub-ekspresi untuk membantu memahami proses perhitungan.<br/>
             • Tabel DNF menunjukkan minterm (kombinasi variabel yang membuat hasil BENAR).<br/>
             • Tabel CNF menunjukkan maxterm (kombinasi variabel yang membuat hasil SALAH).<br/>
             • C = Clear (hapus semua), ⌫ = Backspace.
